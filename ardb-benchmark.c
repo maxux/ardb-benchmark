@@ -16,9 +16,9 @@
 #define SHA256LEN     (size_t) SHA256_DIGEST_LENGTH * 2
 
 typedef struct benchmark_pass_t {
-    unsigned int success;    // upload success
-    clock_t time_begin;      // init time
-    clock_t time_end;        // end time
+    unsigned int success;        // upload success
+    struct timespec time_begin;  // init time
+    struct timespec time_end;    // end time
 
 } benchmark_pass_t;
 
@@ -99,7 +99,7 @@ static void *benchmark_pass_write(void *data) {
     benchmark_t *b = (benchmark_t *) data;
     redisReply *reply;
 
-    b->write.time_begin = clock();
+    clock_gettime(CLOCK_MONOTONIC_RAW, &b->write.time_begin);
 
     for(unsigned int i = 0; i < b->chunks; i++) {
         reply = redisCommand(b->redis, "SET %b %b", b->hashes[i], SHA256LEN, b->buffers[i], b->chunksize);
@@ -109,7 +109,7 @@ static void *benchmark_pass_write(void *data) {
         b->write.success += 1;
     }
 
-    b->write.time_end = clock();
+    clock_gettime(CLOCK_MONOTONIC_RAW, &b->write.time_end);
 
     return NULL;
 }
@@ -118,7 +118,7 @@ static void *benchmark_pass_read(void *data) {
     benchmark_t *b = (benchmark_t *) data;
     redisReply *reply;
 
-    b->read.time_begin = clock();
+    clock_gettime(CLOCK_MONOTONIC_RAW, &b->read.time_begin);
 
     for(unsigned int i = 0; i < b->chunks; i++) {
         reply = redisCommand(b->redis, "GET %b", b->hashes[i], SHA256LEN);
@@ -128,7 +128,7 @@ static void *benchmark_pass_read(void *data) {
         b->read.success += 1;
     }
 
-    b->read.time_end = clock();
+    clock_gettime(CLOCK_MONOTONIC_RAW, &b->read.time_end);
 
     return NULL;
 }
@@ -208,9 +208,16 @@ static benchmark_t *benchmark_generate(benchmark_t *bench) {
     return bench;
 }
 
+double benchmark_deltatime(benchmark_pass_t *pass) {
+    int secs = (pass->time_end.tv_sec - pass->time_begin.tv_sec);
+    double usecs = (pass->time_end.tv_nsec - pass->time_begin.tv_nsec) / 1000000000.0;
+
+    return secs + usecs;
+}
+
 void benchmark_statistics(benchmark_t *bench) {
-    double wtime = (double)(bench->write.time_end - bench->write.time_begin) / CLOCKS_PER_SEC;
-    double rtime = (double)(bench->read.time_end - bench->read.time_begin) / CLOCKS_PER_SEC;
+    double wtime = benchmark_deltatime(&bench->write);
+    double rtime = benchmark_deltatime(&bench->read);
 
     float chunkskb = bench->chunksize / 1024.0;
     float wspeed = ((bench->chunksize * bench->chunks) / wtime) / (1024 * 1024);
@@ -222,6 +229,32 @@ void benchmark_statistics(benchmark_t *bench) {
 
     printf("[+] write: client speed: %.2f MB/s\n", wspeed);
     printf("[+] read : client speed: %.2f MB/s\n", rspeed);
+}
+
+void benchmark_statistics_summary(benchmark_t **benchs, size_t length) {
+    double wspeed = 0;
+    double rspeed = 0;
+    unsigned int rkeys = 0;
+    unsigned int wkeys = 0;
+    float chunksmb = 0;
+
+    for(unsigned int i = 0; i < length; i++) {
+        benchmark_t *bench = benchs[i];
+
+        double wtime = benchmark_deltatime(&bench->write);
+        double rtime = benchmark_deltatime(&bench->read);
+
+        chunksmb += (bench->chunksize / 1024 / 1024.0) * bench->chunks;
+        wspeed += ((bench->chunksize * bench->chunks) / wtime) / (1024 * 1024);
+        rspeed += ((bench->chunksize * bench->chunks) / rtime) / (1024 * 1024);
+        wkeys += bench->write.success;
+        rkeys += bench->read.success;
+    }
+
+    printf("[+] === SUMMARY ===\n");
+    printf("[+] write: clients speed: %.2f MB/s (%.2f MB)\n", wspeed, chunksmb);
+    printf("[+] read : clients speed: %.2f MB/s (%.2f MB)\n", rspeed, chunksmb);
+    printf("[+] ===============\n");
 }
 
 void benchmark_passes(benchmark_t **benchs, unsigned int length) {
@@ -285,6 +318,8 @@ int benchmark(benchmark_t **benchs, unsigned int length) {
     printf("[+] collecting statistics\n");
     for(unsigned int i = 0; i < length; i++)
         benchmark_statistics(benchs[i]);
+
+    benchmark_statistics_summary(benchs, length);
 
     return 0;
 }
