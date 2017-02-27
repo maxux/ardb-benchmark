@@ -1,8 +1,4 @@
 #!/bin/bash
-echo "[+] compiling benchmark"
-gcc -o ardb-benchmark ardb-benchmark.c -W -Wall -O2 -pthread -I/usr/include/hiredis -lhiredis -lpthread -lssl -lcrypto
-
-
 echo "[+] disabling huge pages"
 echo never > /sys/kernel/mm/transparent_hugepage/enabled
 
@@ -19,7 +15,7 @@ for engine in rocksdb leveldb lmdb wiredtiger perconaft forestdb; do
     done
 
     echo "[+] ardb-server-$engine looks ready, run benchmark"
-    /tmp/ardb-benchmark/ardb-benchmark
+    # ...
 
     echo "[+] stopping ardb-$engine"
     redis-cli -p 16379 shutdown
