@@ -32,26 +32,34 @@ nvme=0
 for disk in $disks; do
     type=$(lsblk -n -d -o MODEL /dev/$disk)
     if [[ "$type" == *"Maximus"* ]]; then
-        echo "[+] $disk: mounting to: /mnt/ssd-$ssd"
-        mount /dev/$disk /mnt/ssd-$ssd
+        target=/mnt/ssd-$ssd
+        echo "[+] $disk: mounting to: $target"
+        mkdir -p $target
+        mount /dev/$disk $target
         ssd=$(($ssd + 1))
     fi
 
     if [[ "$type" == *"ST3100"* ]] || [[ "$type" == *"WDC WD"* ]]; then
-        echo "[+] $disk: mounting to: /mnt/hdd-$hdd"
-        mount /dev/$disk /mnt/hdd-$hdd
+        target=/mnt/hdd-$hdd
+        echo "[+] $disk: mounting to: $target"
+        mkdir -p $target
+        mount /dev/$disk $target
         hdd=$(($hdd + 1))
     fi
 
     if [[ "$type" == *"ST8000"* ]]; then
-        echo "[+] $disk: mounting to: /mnt/smr-$smr"
-        mount /dev/$disk /mnt/smr-$smr
+        target=/mnt/smr-$smr
+        echo "[+] $disk: mounting to: $target"
+        mkdir -p $target
+        mount /dev/$disk $target
         smr=$(($smr + 1))
     fi
 
     if [[ "$type" == *"INTEL"* ]]; then
-        echo "[+] $disk: mounting to: /mnt/nvme-$nvme"
-        mount /dev/$disk /mnt/nvme-$nvme
+        target=/mnt/nvme-$nvme
+        echo "[+] $disk: mounting to: $target"
+        mkdir -p $target
+        mount /dev/$disk $target
         nvme=$(($nvme + 1))
     fi
 done
