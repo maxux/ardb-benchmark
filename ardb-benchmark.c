@@ -27,8 +27,8 @@ typedef struct benchmark_t {
     redisContext *redis;      // redis context
     pthread_t pthread;        // thread context
 
-    unsigned int chunksize;   // chunk size
-    unsigned int chunks;      // chunks length
+    size_t chunksize;         // chunk size
+    size_t chunks;            // chunks length
     unsigned char **buffers;  // chunks buffers
     unsigned char **hashes;   // chunks hashes
 
@@ -103,7 +103,13 @@ static void *benchmark_pass_write(void *data) {
 
     for(unsigned int i = 0; i < b->chunks; i++) {
         reply = redisCommand(b->redis, "SET %b %b", b->hashes[i], SHA256LEN, b->buffers[i], b->chunksize);
-        // printf("[+] uploading: %s: %s\n", bench->hashes[i], reply->str);
+
+        // reply should be "OK" (length: 2)
+        if(reply->len != 2) {
+            fprintf(stderr, "[-] %s: %s\n", b->hashes[i], reply->str);
+            exit(EXIT_FAILURE);
+        }
+
         freeReplyObject(reply);
 
         b->write.success += 1;
@@ -122,7 +128,12 @@ static void *benchmark_pass_read(void *data) {
 
     for(unsigned int i = 0; i < b->chunks; i++) {
         reply = redisCommand(b->redis, "GET %b", b->hashes[i], SHA256LEN);
-        // printf("[+] downloaded: %s\n", bench->hashes[i]);
+
+        if(reply->len != (int) b->chunksize) {
+            fprintf(stderr, "[-] %s: invalid size: %d\n", b->hashes[i], reply->len);
+            exit(EXIT_FAILURE);
+        }
+
         freeReplyObject(reply);
 
         b->read.success += 1;
@@ -145,7 +156,8 @@ static void *benchmark_pass_read_secure(void *data) {
 
         // compare hashes
         if(strcmp((const char *) hash, (const char *) b->hashes[i])) {
-            fprintf(stderr, "[-] hash mismatch: %s <> %s\n", hash, b->hashes[i]);
+            fprintf(stderr, "[-] hash mismatch: %s (size: %u)\n", hash, reply->len);
+            fprintf(stderr, "[-] hash expected: %s\n", b->hashes[i]);
             // exit(EXIT_FAILURE);
         }
 
@@ -155,26 +167,36 @@ static void *benchmark_pass_read_secure(void *data) {
     return NULL;
 }
 
+
+//
+// random generator
+//
+// warning: this is a very trivial random generator
+// this is really unsafe, it's just made to provide
+// a really fast way to produce random unique buffer
+// this function is not thread-safe
+//
+static uint64_t __internal_random = 0;
+
+static size_t randomize(unsigned char *buffer, size_t length) {
+    // initialize our random init point
+    if(__internal_random == 0) {
+        srand(time(NULL));
+        __internal_random = rand();
+    }
+
+    // fill the buffer with our fake-random integer
+    for(size_t i = 0; i < length; i += sizeof(__internal_random)) {
+        memcpy(buffer + i, &__internal_random, sizeof(__internal_random));
+        __internal_random++;
+    }
+
+    return length;
+}
+
 //
 // buffers
 //
-static size_t randomize(unsigned char *buffer, size_t length) {
-    int rnd = open("/dev/urandom", O_RDONLY);
-    size_t rndread = 0;
-    ssize_t result;
-
-    while (rndread < length) {
-        if((result = read(rnd, buffer + rndread, length - rndread)) < 0)
-            diep("read");
-
-        rndread += result;
-    }
-
-    close(rnd);
-
-    return rndread;
-}
-
 static unsigned char *benchmark_buffer_generate(benchmark_t *bench, size_t buffer) {
     if(!(bench->buffers[buffer] = (unsigned char *) malloc(sizeof(char) * bench->chunksize)))
         diep("malloc: buffer");
@@ -190,8 +212,15 @@ static unsigned char *benchmark_buffer_generate(benchmark_t *bench, size_t buffe
     return bench->hashes[buffer];
 }
 
+static void progress(unsigned int current, size_t total, char *message) {
+    double pc = ((double) current / total) * 100;
+    printf("\033[?25l");
+    printf("\r[+] %s: %04.1f%%", message, pc);
+}
+
 static benchmark_t *benchmark_generate(benchmark_t *bench) {
-    printf("[+] allocating buffers [client %u]\n", bench->id);
+    double size = ((double) bench->chunks * bench->chunksize) / (1024 * 1024);
+    printf("[+] allocating buffers [client #%02u]: %.1f MB\n", bench->id, size);
 
     // allocating memory for hashes
     if(!(bench->hashes = (unsigned char **) malloc(sizeof(char *) * bench->chunks)))
@@ -202,8 +231,14 @@ static benchmark_t *benchmark_generate(benchmark_t *bench) {
         diep("malloc: buffers");
 
     // generating buffers
-    for(unsigned int buffer = 0; buffer < bench->chunks; buffer++)
+    for(unsigned int buffer = 0; buffer < bench->chunks; buffer++) {
+        if(buffer % 32 == 0)
+            progress(buffer, bench->chunks, "generating random data");
+
         benchmark_buffer_generate(bench, buffer);
+    }
+
+    printf("\r\033[2K");
 
     return bench;
 }
@@ -298,11 +333,14 @@ void benchmark_passes(benchmark_t **benchs, unsigned int length) {
 }
 
 int benchmark(benchmark_t **benchs, unsigned int length) {
+    size_t psize = (benchs[0]->chunks * benchs[0]->chunksize);
+    int size = (psize * length) / (1024 * 1024);
+
     //
     // allocating and fill buffers with random data
     // computing hash of buffers, which will be used as keys
     //
-    printf("[+] generating random buffers\n");
+    printf("[+] generating random buffers: %d MB\n", size);
     for(unsigned int i = 0; i < length; i++)
         benchmark_generate(benchs[i]);
 
