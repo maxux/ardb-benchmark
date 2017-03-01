@@ -31,6 +31,7 @@ nvme=0
 
 for disk in $disks; do
     type=$(lsblk -n -d -o MODEL /dev/$disk)
+
     if [[ "$type" == *"Maximus"* ]]; then
         target=/mnt/ssd-$ssd
         echo "[+] $disk: mounting to: $target"

@@ -11,7 +11,7 @@
 #include "openssl/sha.h"
 
 #define CHUNKSIZE     16 * 1024   // 16 KB
-#define CHUNKS        4096        // 4096 chunks of 16 KB per client
+#define CHUNKS        128 * 1024  // 4096 chunks of 16 KB per client
 
 #define SHA256LEN     (size_t) SHA256_DIGEST_LENGTH * 2
 
@@ -326,43 +326,62 @@ int benchmark(benchmark_t **benchs, unsigned int length) {
 
 int main(int argc, char *argv[]) {
     benchmark_t **remotes;
-    unsigned int threads = 4;
 
     //
     // settings
     //
-    if(argc > 1)
-        threads = atoi(argv[1]);
-
-    if(threads < 1 || threads > 16) {
-        fprintf(stderr, "[-] invalid threads count\n");
+    if(argc < 2) {
+        fprintf(stderr, "[-] missing ardb hosts: %s host:port [host:port [...]]\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
     //
     // initializing
     //
-    printf("[+] initializing\n");
-    if(!(remotes = (benchmark_t **) malloc(sizeof(benchmark_t *) * threads)))
+    printf("[+] initializing %d clients\n", argc - 1);
+    if(!(remotes = (benchmark_t **) malloc(sizeof(benchmark_t *) * (argc - 1))))
         diep("malloc");
 
     //
     // connecting clients
     //
-    printf("[+] connecting redis [%d threads]\n", threads);
-    for(unsigned int i = 0; i < threads; i++) {
-        if(!(remotes[i] = benchmark_init("127.0.0.1", 16379))) {
+    for(int i = 1; i < argc; i++) {
+        char *arg = argv[i];
+        int idx = i - 1;
+
+        char *host;
+        int port;
+
+        if(!(host = strchr(arg, ':'))) {
+            fprintf(stderr, "[-] %s: invalid host format, expected <host:port>\n", arg);
+            exit(EXIT_FAILURE);
+        }
+
+        if(!(port = atoi(host + 1))) {
+            fprintf(stderr, "[-] %s: invalid host format, expected <host:port>\n", arg);
+            exit(EXIT_FAILURE);
+        }
+
+        if(!(host = strndup(arg, host - arg)))
+            diep("strndup");
+
+        printf("[+] connecting host: %s, port: %d\n", host, port);
+
+        if(!(remotes[idx] = benchmark_init(host, port))) {
             fprintf(stderr, "[-] cannot allocate benchmark\n");
             exit(EXIT_FAILURE);
         }
 
-        remotes[i]->id = i;
-        remotes[i]->chunksize = CHUNKSIZE;
-        remotes[i]->chunks = CHUNKS;
+        // cleaning
+        free(host);
+
+        remotes[idx]->id = (unsigned int) i;
+        remotes[idx]->chunksize = CHUNKSIZE;
+        remotes[idx]->chunks = CHUNKS;
     }
 
     //
     // starting benchmarks process
     //
-    return benchmark(remotes, threads);
+    return benchmark(remotes, argc - 1);
 }
